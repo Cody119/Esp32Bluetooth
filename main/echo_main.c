@@ -86,7 +86,7 @@ typedef struct {
 esp_ble_adv_params_t;
 */
 
-static esp_ble_adv_params_t test_adv_params = {
+static esp_ble_adv_params_t adv_params = {
     .adv_int_min        = 0x20,
     .adv_int_max        = 0x40,
     .adv_type           = ADV_TYPE_IND,
@@ -232,11 +232,39 @@ static struct gatts_profile_inst gl_profile_tab[PROFILE_NUM] = {
 // esp_err_t esp_ble_gatts_set_attr_value(uint16_t attr_handle, uint16_t length, const uint8_t *value)
 // esp_gatt_status_t esp_ble_gatts_get_attr_value(uint16_t attr_handle, uint16_t *length, const uint8_t **value)
 
+static uint16_t get_out_ccc() {
+    uint16_t len;
+    const uint8_t val[MAX_DATA];
+    esp_gatt_status_t err = esp_ble_gatts_get_attr_value(echo_handle_table[ESS_IDX_OUT_NTF_CFG], &len, (const uint8_t**)&val);
+    if (err) {
+        ESP_LOGE(TAG, "Failed to get out descriptor, error code = %x", err);
+    }
+    if (len != 2) {
+        ESP_LOGE(TAG, "Out descriptor is not 2 bytes, acctual size = %d", len);
+    }
+    return (val[1] << 8) | val[0];
+}
+
+static void get_in_val(uint16_t *len, const uint8_t **buf) {
+    esp_gatt_status_t err = esp_ble_gatts_get_attr_value(echo_handle_table[ESS_IDX_IN_PT_VAL], len, buf);
+    if (err) {
+        ESP_LOGE(TAG, "Failed to get in value, error code = %x", err);
+    }
+}
+
 // Update the out value
-static void update_echo(uint16_t len, uint8_t *value) {
+static void update_echo(esp_gatt_if_t gatts_if, uint16_t conn_id, uint16_t len, uint8_t *value) {
     esp_err_t err = esp_ble_gatts_set_attr_value(echo_handle_table[ESS_IDX_OUT_VAL], len, value);
     if (err) {
         ESP_LOGE(TAG, "Failed to set charecteristic value, error code = %x", err);
+    } else {
+        ESP_LOGI(TAG, "Send update, value len = %d, value :", len);
+        esp_log_buffer_hex(TAG, value, len);
+        //last param idicates if confirmation is needed
+        err = esp_ble_gatts_send_indicate(gatts_if, conn_id, echo_handle_table[ESS_IDX_OUT_VAL], len, value, false);
+        if (err) {
+            ESP_LOGE(TAG, "Failed to send charecteristic, error code = %x", err);
+        } 
     }
 }
 
@@ -276,40 +304,43 @@ static void gatts_profile_echo_event_handler(esp_gatts_cb_event_t event, esp_gat
 
                 // Update the output if the input changes
                 if (echo_handle_table[ESS_IDX_IN_PT_VAL] == param->write.handle) {
-                    update_echo(param->write.len, param->write.value);
+                    update_echo(gatts_if, param->write.conn_id, param->write.len, param->write.value);
                 }
 
                 // Handle descriptors
-                if (echo_handle_table[ESS_IDX_OUT_NTF_CFG] == param->write.handle && param->write.len == 2){
+                if (echo_handle_table[ESS_IDX_OUT_NTF_CFG] == param->write.handle && param->write.len == 2) {
 
                     //Decode the descriptor val from a uint8_t[2] to a uint16_t
                     uint16_t descr_value = param->write.value[1] << 8 | param->write.value[0];
 
-                    if (descr_value == 0x0001){
-                        ESP_LOGI(TAG, "notify enable");
-                        uint8_t notify_data[15];
-                        for (int i = 0; i < sizeof(notify_data); ++i) {
-                            notify_data[i] = i % 0xff;
-                        }
-                        //the size of notify_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, echo_handle_table[ESS_IDX_OUT_VAL],
-                                                sizeof(notify_data), notify_data, false);
-                    }else if (descr_value == 0x0002){
-                        ESP_LOGI(TAG, "indicate enable");
-                        uint8_t indicate_data[15];
-                        for (int i = 0; i < sizeof(indicate_data); ++i) {
-                            indicate_data[i] = i % 0xff;
-                        }
-                        //the size of indicate_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, echo_handle_table[ESS_IDX_OUT_VAL],
-                                            sizeof(indicate_data), indicate_data, true);
-                    }
-                    else if (descr_value == 0x0000){
-                        ESP_LOGI(TAG, "notify/indicate disable ");
-                    }else{
-                        ESP_LOGE(TAG, "unknown descr value");
-                        esp_log_buffer_hex(TAG, param->write.value, param->write.len);
-                    }
+                    // if (descr_value == 0x0001) {
+                    //     ESP_LOGI(TAG, "notify enable");
+                    //     const uint8_t *data;
+                    //     uint16_t len;
+                    //     get_in_val(&len, &data);
+
+                    //     ESP_LOGI(TAG, "Descriptor set to notify, value len = %d, value :", len);
+                    //     esp_log_buffer_hex(TAG, data, len);
+                        
+                    //     //last param idicates if confirmation is needed
+                    //     esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, echo_handle_table[ESS_IDX_OUT_VAL], len, data, false);
+                    // }
+                    // }else if (descr_value == 0x0002){
+                    //     ESP_LOGI(TAG, "indicate enable");
+                    //     uint8_t indicate_data[15];
+                    //     for (int i = 0; i < sizeof(indicate_data); ++i) {
+                    //         indicate_data[i] = i % 0xff;
+                    //     }
+                    //     //the size of indicate_data[] need less than MTU size
+                    //     esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, echo_handle_table[ESS_IDX_OUT_VAL],
+                    //                         sizeof(indicate_data), indicate_data, true);
+                    // }
+                    // else if (descr_value == 0x0000) {
+                    //     ESP_LOGI(TAG, "notify/indicate disable ");
+                    // } else {
+                    //     ESP_LOGE(TAG, "unknown descr value");
+                    //     esp_log_buffer_hex(TAG, param->write.value, param->write.len);
+                    // }
 
                 }
 
@@ -322,6 +353,11 @@ static void gatts_profile_echo_event_handler(esp_gatts_cb_event_t event, esp_gat
                 //example_prepare_write_event_env(gatts_if, &prepare_write_env, param);
                 ESP_LOGI(TAG, "Prepare write event");
             }
+            break;
+
+        case ESP_GATTS_DISCONNECT_EVT:
+            ESP_LOGI(TAG, "ESP_GATTS_DISCONNECT_EVT, reason = 0x%x", param->disconnect.reason);
+            esp_ble_gap_start_advertising(&adv_params);
             break;
             
         default:
@@ -379,7 +415,7 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
         case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
             adv_config_finished &= (~adv_config_flag);
             if (adv_config_finished == 0){
-                esp_ble_gap_start_advertising(&test_adv_params);
+                esp_ble_gap_start_advertising(&adv_params);
             }
             break;
 
