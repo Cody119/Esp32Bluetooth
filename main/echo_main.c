@@ -229,6 +229,17 @@ static struct gatts_profile_inst gl_profile_tab[PROFILE_NUM] = {
     },
 };
 
+// esp_err_t esp_ble_gatts_set_attr_value(uint16_t attr_handle, uint16_t length, const uint8_t *value)
+// esp_gatt_status_t esp_ble_gatts_get_attr_value(uint16_t attr_handle, uint16_t *length, const uint8_t **value)
+
+// Update the out value
+static void update_echo(uint16_t len, uint8_t *value) {
+    esp_err_t err = esp_ble_gatts_set_attr_value(echo_handle_table[ESS_IDX_OUT_VAL], len, value);
+    if (err) {
+        ESP_LOGE(TAG, "Failed to set charecteristic value, error code = %x", err);
+    }
+}
+
 /* Event handler for a particullar profile (The "Echo profile" in this case) */
 static void gatts_profile_echo_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
     switch (event) {
@@ -262,6 +273,11 @@ static void gatts_profile_echo_event_handler(esp_gatts_cb_event_t event, esp_gat
                 // the data length of gattc write  must be less than GATTS_DEMO_CHAR_VAL_LEN_MAX.
                 ESP_LOGI(TAG, "GATT_WRITE_EVT, handle = %d, value len = %d, value :", param->write.handle, param->write.len);
                 esp_log_buffer_hex(TAG, param->write.value, param->write.len);
+
+                // Update the output if the input changes
+                if (echo_handle_table[ESS_IDX_IN_PT_VAL] == param->write.handle) {
+                    update_echo(param->write.len, param->write.value);
+                }
 
                 // Handle descriptors
                 if (echo_handle_table[ESS_IDX_OUT_NTF_CFG] == param->write.handle && param->write.len == 2){
