@@ -50,6 +50,7 @@ static uint8_t out_char_uuid128[16] = {
 
 static uint8_t out_char_val[20] = {0x45};
 static uint8_t out_char_ccc[2] = {0x00, 0x00};
+#define MAX_DATA sizeof(out_char_val)
 
 
 static const uint16_t primary_service_uuid         = ESP_GATT_UUID_PRI_SERVICE;
@@ -257,7 +258,54 @@ static void gatts_profile_echo_event_handler(esp_gatts_cb_event_t event, esp_gat
             break;
         }
         case ESP_GATTS_WRITE_EVT:
+            if (!param->write.is_prep){
+                // the data length of gattc write  must be less than GATTS_DEMO_CHAR_VAL_LEN_MAX.
+                ESP_LOGI(TAG, "GATT_WRITE_EVT, handle = %d, value len = %d, value :", param->write.handle, param->write.len);
+                esp_log_buffer_hex(TAG, param->write.value, param->write.len);
 
+                // Handle descriptors
+                if (echo_handle_table[ESS_IDX_OUT_NTF_CFG] == param->write.handle && param->write.len == 2){
+
+                    //Decode the descriptor val from a uint8_t[2] to a uint16_t
+                    uint16_t descr_value = param->write.value[1] << 8 | param->write.value[0];
+
+                    if (descr_value == 0x0001){
+                        ESP_LOGI(TAG, "notify enable");
+                        uint8_t notify_data[15];
+                        for (int i = 0; i < sizeof(notify_data); ++i) {
+                            notify_data[i] = i % 0xff;
+                        }
+                        //the size of notify_data[] need less than MTU size
+                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, echo_handle_table[ESS_IDX_OUT_VAL],
+                                                sizeof(notify_data), notify_data, false);
+                    }else if (descr_value == 0x0002){
+                        ESP_LOGI(TAG, "indicate enable");
+                        uint8_t indicate_data[15];
+                        for (int i = 0; i < sizeof(indicate_data); ++i) {
+                            indicate_data[i] = i % 0xff;
+                        }
+                        //the size of indicate_data[] need less than MTU size
+                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, echo_handle_table[ESS_IDX_OUT_VAL],
+                                            sizeof(indicate_data), indicate_data, true);
+                    }
+                    else if (descr_value == 0x0000){
+                        ESP_LOGI(TAG, "notify/indicate disable ");
+                    }else{
+                        ESP_LOGE(TAG, "unknown descr value");
+                        esp_log_buffer_hex(TAG, param->write.value, param->write.len);
+                    }
+
+                }
+
+                /* send response when param->write.need_rsp is true*/
+                if (param->write.need_rsp){
+                    esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
+                }
+            }else{
+                /* handle prepare write */
+                //example_prepare_write_event_env(gatts_if, &prepare_write_env, param);
+                ESP_LOGI(TAG, "Prepare write event");
+            }
             break;
             
         default:
